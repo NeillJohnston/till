@@ -1,5 +1,5 @@
-// ===== :52
-// ===== :863 - (Imports)
+// ===== :53
+// ===== :864 - (Imports)
 use std::{
     env,
     fs::OpenOptions,
@@ -10,15 +10,15 @@ use std::{
     }
 };
 
-// ===== :885 - (Constants)
+// ===== :886 - (Constants)
 const BLOCK_MARKER:         &str = r"\\";
 const LABELED_BLOCK_MARKER: &str = r"\\@";
 const CONT_BLOCK_MARKER:    &str = r"\\-";
 const FORWARD_REF_MARKER:   &str = r"@>";
 const BACKWARD_REF_MARKER:  &str = r"<@";
 
-// ===== :68 - The till parser + compiler
-// ===== :89 - Data structures
+// ===== :69 - The till parser + compiler
+// ===== :90 - Data structures
 #[derive(Clone)]
 struct Block {
     tag: BlockTag,
@@ -67,7 +67,7 @@ impl Block {
         }
     }
 
-    // ===== :897 - (fn Block::trim)
+    // ===== :898 - (fn Block::trim)
     fn trim(&mut self) {
         let mut start = 0;
         for line in self.text.iter() {
@@ -93,7 +93,7 @@ impl Block {
     }
 }
 
-// ===== :152
+// ===== :153
 enum CodeTree {
     Leaf(String),
     Node {
@@ -139,7 +139,7 @@ impl CodeTree {
     }
 }
 
-// ===== :927 - (impl NodeTag)
+// ===== :928 - (impl NodeTag)
 impl NodeTag {
     fn continued(&self) -> Self {
         match self {
@@ -170,21 +170,21 @@ impl NodeTag {
     }
 }
 
-// ===== :206
+// ===== :207
 #[derive(Debug)]
 enum ParserError {
     ReusedRef(String, usize),  // (label, line number)
     RefNotFound(String, usize) // (label, line number)
 }
 
-// ===== :226 - The parser
+// ===== :227 - The parser
 fn parse(
     args: &Args,
     input: &mut dyn io::Read
 ) -> Result<(Vec<Block>, CodeTree), Error> {
     let mut input = io::BufReader::new(input);
 
-    // ===== :248 - ...fn parse
+    // ===== :249 - ...fn parse
     let mut block_list = Vec::new();
     let mut curr_block = Block::new_docs(1);
     let mut line_idx = 1;
@@ -242,7 +242,7 @@ fn parse(
         }
     }
 
-    // ===== :316
+    // ===== :317
     let code = block_list
         .iter()
         .filter(|block| block.tag != BlockTag::Doc)
@@ -251,7 +251,7 @@ fn parse(
     
     let docs = block_list;
 
-    // ===== :336
+    // ===== :337
     let mut used = vec![false; code.len()];
     let mut tree = CodeTree::new_node(NodeTag::Root, 0);
     
@@ -266,7 +266,7 @@ fn parse(
     return Ok((docs, tree));
 }
 
-// ===== :359 - fn resolve
+// ===== :360 - fn resolve
 fn resolve(
     idx: usize,
     tag: NodeTag,
@@ -280,7 +280,7 @@ fn resolve(
     let mut tree = CodeTree::new_node(tag.clone(), *line_bias);
     for (line_idx, line) in text.iter().enumerate() {
         let line_idx = line_bias + line_idx;
-        // ===== :387 - Process each line
+        // ===== :388 - Process each line
         let mut ref_type = None;
         let content = line.trim_start();
         if content.starts_with(FORWARD_REF_MARKER) {
@@ -301,7 +301,7 @@ fn resolve(
                 .trim()
                 .to_string();
         
-            // ===== :425 - Process the ref
+            // ===== :426 - Process the ref
             let mut ref_idx = None;
             // Rust trick to dynamically dispatch the iterator function for different types
             let range: Box<dyn Iterator<Item = usize>> =
@@ -344,7 +344,7 @@ fn resolve(
         }
     }
 
-    // ===== :468 - Check for a cont. block
+    // ===== :469 - Check for a cont. block
     if idx+1 < code.len() {
         if let BlockTag::ContCode = code[idx+1].tag {
             let subtree = resolve(idx+1, tag.continued(), code, used)?;
@@ -355,7 +355,7 @@ fn resolve(
     return Ok(tree);
 }
 
-// ===== :486 - The compiler
+// ===== :487 - The compiler
 fn compile(
     args: &Args,
     docs: Vec<Block>,
@@ -372,7 +372,7 @@ fn compile(
     return Ok(());
 }
 
-// ===== :510
+// ===== :511
 fn write_docs<W: Write>(
     docs: &Vec<Block>,
     output: &mut io::BufWriter<W>,
@@ -413,7 +413,7 @@ fn write_docs<W: Write>(
     return Ok(());
 }
 
-// ===== :557
+// ===== :558
 fn write_code<W: Write>(
     code: &CodeTree,
     output: &mut io::BufWriter<W>,
@@ -422,7 +422,7 @@ fn write_code<W: Write>(
     write_code_tree(&"".to_string(), &code, output, args)
 }
 
-// ===== :567
+// ===== :568
 fn write_code_tree<W: Write>(
     whitespace: &String,
     code: &CodeTree,
@@ -481,8 +481,8 @@ fn write_code_tree<W: Write>(
     return Ok(());
 }
 
-// ===== :631 - The till app
-// ===== :643 - Data structures
+// ===== :632 - The till app
+// ===== :644 - Data structures
 struct Args {
     docs_only: bool,
     code_only: bool,
@@ -506,7 +506,7 @@ impl Args {
     }
 }
 
-// ===== :672
+// ===== :673
 #[derive(Debug)]
 enum ArgError {
     DocsAndCodeOnly,
@@ -515,7 +515,7 @@ enum ArgError {
     NotEnoughArgs
 }
 
-// ===== :689 - The main function
+// ===== :690 - The main function
 fn main() -> Result<(), Error> {
     let mut args = Args::new();
     let mut pos_args = Vec::new();
@@ -539,7 +539,7 @@ fn main() -> Result<(), Error> {
         }
     }
 
-// ===== :722
+// ===== :723
     if args.docs_only && args.code_only {
         return Err(ArgError::DocsAndCodeOnly.into());
     }
@@ -572,7 +572,7 @@ fn main() -> Result<(), Error> {
         return Err(ArgError::TooManyArgs.into());
     }
 
-// ===== :760
+// ===== :761
     let mut input: Box<dyn io::Read>;
     if args.stdin {
         input = Box::new(io::stdin());
@@ -586,7 +586,7 @@ fn main() -> Result<(), Error> {
 
     let (docs, code) = parse(&args, &mut input)?;
 
-// ===== :779
+// ===== :780
     let mut docs_output: Box<dyn io::Write>;
     if args.code_only {
         // Very handy Rust std util, essentially a programmatic /dev/null
@@ -625,7 +625,7 @@ fn main() -> Result<(), Error> {
     return Ok(());
 }
 
-// ===== :826 - Error handling
+// ===== :827 - Error handling
 // TODO add pretty-printing instead of using derived Debug
 #[derive(Debug)]
 enum Error {

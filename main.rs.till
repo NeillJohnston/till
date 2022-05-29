@@ -16,6 +16,7 @@ Flag | Meaning
 `-o` | Write output to stdout (requires one of `-d`, `-c`)
 `-p` | Preserve source code formatting
 
+This README and the source code (src/main.rs) were generated with `till`.
 If you want to see it in action, you can re-generate README.md/main.rs for yourself:
 ```
 cargo run main.rs.till README.md src/main.rs
