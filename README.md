@@ -16,6 +16,11 @@ Flag | Meaning
 `-o` | Write output to stdout (requires one of `-d`, `-c`)
 `-p` | Preserve source code formatting
 
+If you want to see it in action, you can re-generate README.md/main.rs for yourself:
+```
+cargo run main.rs.till README.md src/main.rs
+```
+
 ## Overview
 
 Till takes a very simple approach to literate programming, allowing your source files to remain clean and easily editable.
@@ -627,6 +632,7 @@ impl Args {
             stdin: false,
             stdout: false,
             preserve: false,
+            // TODO make this configurable somehow, maybe read input file name?
             comment: "//".to_string()
         }
     }
@@ -647,6 +653,7 @@ enum ArgError {
 
 ### The main function
 
+Finally, we're at the entrypoint of the app.
 The first thing the app needs to do is parse the command-line args to extract the flags and positional arguments.
 
 **The main function**
@@ -781,6 +788,7 @@ By using some `From` implementations, this error type can be a sum of different 
 
 **Error handling**
 ```
+// TODO add pretty-printing instead of using derived Debug
 #[derive(Debug)]
 enum Error {
     Arg(ArgError),
