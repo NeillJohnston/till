@@ -511,8 +511,12 @@ Obviously, the complexity is hidden behind other functions again.
 fn write_docs<W: Write>(
     docs: &Vec<Block>,
     output: &mut io::BufWriter<W>,
-    _args: &Args
+    args: &Args
 ) -> Result<(), io::Error> {
+    let syntax_lang =
+        if let Some(lang) = &args.lang { lang }
+        else                           { ""   };
+
     for Block { tag, text, .. } in docs.iter() {
         match tag {
             BlockTag::Doc => {
@@ -521,7 +525,7 @@ fn write_docs<W: Write>(
                 }
             },
             BlockTag::Code => {
-                writeln!(output, "```")?;
+                writeln!(output, "```{}", syntax_lang)?;
                 for line in text.iter() {
                     write!(output, "{}", line)?;
                 }
@@ -529,14 +533,14 @@ fn write_docs<W: Write>(
             },
             BlockTag::LabeledCode(label) => {
                 writeln!(output, "**{}**", label)?;
-                writeln!(output, "```")?;
+                writeln!(output, "```{}", syntax_lang)?;
                 for line in text.iter() {
                     write!(output, "{}", line)?;
                 }
                 writeln!(output, "```")?;
             },
             BlockTag::ContCode => {
-                writeln!(output, "```")?;
+                writeln!(output, "```{}", syntax_lang)?;
                 for line in text.iter() {
                     write!(output, "{}", line)?;
                 }
@@ -563,6 +567,8 @@ fn write_code<W: Write>(
     write_code_tree(&"".to_string(), &code, output, args)
 }
 
+@> (Supported languages)
+
 \\-
 
 fn write_code_tree<W: Write>(
@@ -585,20 +591,22 @@ fn write_code_tree<W: Write>(
             whitespace.push_str(&whitespace_);
 
             // Section header comment
-            match tag {
-                NodeTag::TopLevel => {
-                    writeln!(output, r"{}{} ===== :{}", whitespace, args.comment, line)?;
-                },
-                NodeTag::ContTopLevel => {
-                    writeln!(output, r"{}{} ===== :{}", whitespace, args.comment, line)?;
-                },
-                NodeTag::Labeled(label) => {
-                    writeln!(output, r"{}{} ===== :{} - {}", whitespace, args.comment, line, label)?;
-                },
-                NodeTag::ContLabeled(_) => {
-                    writeln!(output, r"{}{} ===== :{}", whitespace, args.comment, line)?;
-                },
-                _ => {}
+            if let Some(comment) = &args.comment {
+                match tag {
+                    NodeTag::TopLevel => {
+                        writeln!(output, r"{}{} ===== :{}", whitespace, comment, line)?;
+                    },
+                    NodeTag::ContTopLevel => {
+                        writeln!(output, r"{}{} ===== :{}", whitespace, comment, line)?;
+                    },
+                    NodeTag::Labeled(label) => {
+                        writeln!(output, r"{}{} ===== :{} - {}", whitespace, comment, line, label)?;
+                    },
+                    NodeTag::ContLabeled(_) => {
+                        writeln!(output, r"{}{} ===== :{}", whitespace, comment, line)?;
+                    },
+                    _ => {}
+                }
             }
 
             // Write the content of the code tree
@@ -647,7 +655,9 @@ struct Args {
     stdin: bool,
     stdout: bool,
     preserve: bool,
-    comment: String
+
+    lang: Option<String>,
+    comment: Option<String>
 }
 
 impl Args {
@@ -658,8 +668,8 @@ impl Args {
             stdin: false,
             stdout: false,
             preserve: false,
-            // TODO make this configurable somehow, maybe read input file name?
-            comment: "//".to_string()
+            lang: None,
+            comment: None
         }
     }
 }
@@ -750,6 +760,29 @@ There are a few rules to uphold, based on the flags that are set:
 
     if let Ok(_) = next_pos_arg() {
         return Err(ArgError::TooManyArgs.into());
+    }
+
+\\
+
+Here we can also check for a language extension.
+By convention, if your file extension is ".lang.till", then `till` will read lang as the source language name and provide additional formatting - section comments in the source code and Markdown-enabled syntax highlighting in the documentation.
+
+\\-
+
+    if let Some(input_path_text) = &input_path {
+        // Reverse-split input_path to get something like [till, <lang>, filename, ..]
+        let exts: Vec<&str> = input_path_text
+            .rsplit('.')
+            .collect();
+        
+        if exts.len() >= 3 && exts[0] == "till" {
+            let lang = exts[1];
+
+            args.lang = Some(lang.to_string());
+            args.comment = COMMENT_STYLES
+                .get(lang)
+                .map(|comment| comment.to_string());
+        }
     }
 
 \\
@@ -861,7 +894,11 @@ Usually these come first, but since we're just importing some std libraries, I w
 
 \\@ (Imports)
 
+#[macro_use]
+extern crate lazy_static; // For the language-comment map
+
 use std::{
+    collections::HashMap,
     env,
     fs::OpenOptions,
     io::{
@@ -953,4 +990,30 @@ impl NodeTag {
             _ => false
         }
     }
+}
+
+\\
+
+\\@ (Supported languages)
+
+lazy_static! {
+    static ref COMMENT_STYLES: HashMap<&'static str, &'static str> = {
+        let comment_style_pairs = vec![
+            ("rs",   "//"),
+            ("c",    "//"),
+            ("cpp",  "//"),
+            ("java", "//"),
+            ("py",   "#" ),
+            ("js",   "//"),
+            ("ts",   "//"),
+            ("hs",   "--")
+        ];
+
+        let mut map = HashMap::new();
+        for (lang, comment) in comment_style_pairs.into_iter() {
+            map.insert(lang, comment);
+        }
+
+        map
+    };
 }

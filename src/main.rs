@@ -1,6 +1,10 @@
 // ===== :53
-// ===== :864 - (Imports)
+// ===== :897 - (Imports)
+#[macro_use]
+extern crate lazy_static; // For the language-comment map
+
 use std::{
+    collections::HashMap,
     env,
     fs::OpenOptions,
     io::{
@@ -10,7 +14,7 @@ use std::{
     }
 };
 
-// ===== :886 - (Constants)
+// ===== :923 - (Constants)
 const BLOCK_MARKER:         &str = r"\\";
 const LABELED_BLOCK_MARKER: &str = r"\\@";
 const CONT_BLOCK_MARKER:    &str = r"\\-";
@@ -67,7 +71,7 @@ impl Block {
         }
     }
 
-    // ===== :898 - (fn Block::trim)
+    // ===== :935 - (fn Block::trim)
     fn trim(&mut self) {
         let mut start = 0;
         for line in self.text.iter() {
@@ -139,7 +143,7 @@ impl CodeTree {
     }
 }
 
-// ===== :928 - (impl NodeTag)
+// ===== :965 - (impl NodeTag)
 impl NodeTag {
     fn continued(&self) -> Self {
         match self {
@@ -376,8 +380,12 @@ fn compile(
 fn write_docs<W: Write>(
     docs: &Vec<Block>,
     output: &mut io::BufWriter<W>,
-    _args: &Args
+    args: &Args
 ) -> Result<(), io::Error> {
+    let syntax_lang =
+        if let Some(lang) = &args.lang { lang }
+        else                           { ""   };
+
     for Block { tag, text, .. } in docs.iter() {
         match tag {
             BlockTag::Doc => {
@@ -386,7 +394,7 @@ fn write_docs<W: Write>(
                 }
             },
             BlockTag::Code => {
-                writeln!(output, "```")?;
+                writeln!(output, "```{}", syntax_lang)?;
                 for line in text.iter() {
                     write!(output, "{}", line)?;
                 }
@@ -394,14 +402,14 @@ fn write_docs<W: Write>(
             },
             BlockTag::LabeledCode(label) => {
                 writeln!(output, "**{}**", label)?;
-                writeln!(output, "```")?;
+                writeln!(output, "```{}", syntax_lang)?;
                 for line in text.iter() {
                     write!(output, "{}", line)?;
                 }
                 writeln!(output, "```")?;
             },
             BlockTag::ContCode => {
-                writeln!(output, "```")?;
+                writeln!(output, "```{}", syntax_lang)?;
                 for line in text.iter() {
                     write!(output, "{}", line)?;
                 }
@@ -413,7 +421,7 @@ fn write_docs<W: Write>(
     return Ok(());
 }
 
-// ===== :558
+// ===== :562
 fn write_code<W: Write>(
     code: &CodeTree,
     output: &mut io::BufWriter<W>,
@@ -422,7 +430,30 @@ fn write_code<W: Write>(
     write_code_tree(&"".to_string(), &code, output, args)
 }
 
-// ===== :568
+// ===== :999 - (Supported languages)
+lazy_static! {
+    static ref COMMENT_STYLES: HashMap<&'static str, &'static str> = {
+        let comment_style_pairs = vec![
+            ("rs",   "//"),
+            ("c",    "//"),
+            ("cpp",  "//"),
+            ("java", "//"),
+            ("py",   "#" ),
+            ("js",   "//"),
+            ("ts",   "//"),
+            ("hs",   "--")
+        ];
+
+        let mut map = HashMap::new();
+        for (lang, comment) in comment_style_pairs.into_iter() {
+            map.insert(lang, comment);
+        }
+
+        map
+    };
+}
+
+// ===== :574
 fn write_code_tree<W: Write>(
     whitespace: &String,
     code: &CodeTree,
@@ -443,20 +474,22 @@ fn write_code_tree<W: Write>(
             whitespace.push_str(&whitespace_);
 
             // Section header comment
-            match tag {
-                NodeTag::TopLevel => {
-                    writeln!(output, r"{}{} ===== :{}", whitespace, args.comment, line)?;
-                },
-                NodeTag::ContTopLevel => {
-                    writeln!(output, r"{}{} ===== :{}", whitespace, args.comment, line)?;
-                },
-                NodeTag::Labeled(label) => {
-                    writeln!(output, r"{}{} ===== :{} - {}", whitespace, args.comment, line, label)?;
-                },
-                NodeTag::ContLabeled(_) => {
-                    writeln!(output, r"{}{} ===== :{}", whitespace, args.comment, line)?;
-                },
-                _ => {}
+            if let Some(comment) = &args.comment {
+                match tag {
+                    NodeTag::TopLevel => {
+                        writeln!(output, r"{}{} ===== :{}", whitespace, comment, line)?;
+                    },
+                    NodeTag::ContTopLevel => {
+                        writeln!(output, r"{}{} ===== :{}", whitespace, comment, line)?;
+                    },
+                    NodeTag::Labeled(label) => {
+                        writeln!(output, r"{}{} ===== :{} - {}", whitespace, comment, line, label)?;
+                    },
+                    NodeTag::ContLabeled(_) => {
+                        writeln!(output, r"{}{} ===== :{}", whitespace, comment, line)?;
+                    },
+                    _ => {}
+                }
             }
 
             // Write the content of the code tree
@@ -481,15 +514,17 @@ fn write_code_tree<W: Write>(
     return Ok(());
 }
 
-// ===== :632 - The till app
-// ===== :644 - Data structures
+// ===== :640 - The till app
+// ===== :652 - Data structures
 struct Args {
     docs_only: bool,
     code_only: bool,
     stdin: bool,
     stdout: bool,
     preserve: bool,
-    comment: String
+
+    lang: Option<String>,
+    comment: Option<String>
 }
 
 impl Args {
@@ -500,13 +535,13 @@ impl Args {
             stdin: false,
             stdout: false,
             preserve: false,
-            // TODO make this configurable somehow, maybe read input file name?
-            comment: "//".to_string()
+            lang: None,
+            comment: None
         }
     }
 }
 
-// ===== :673
+// ===== :683
 #[derive(Debug)]
 enum ArgError {
     DocsAndCodeOnly,
@@ -515,7 +550,7 @@ enum ArgError {
     NotEnoughArgs
 }
 
-// ===== :690 - The main function
+// ===== :700 - The main function
 fn main() -> Result<(), Error> {
     let mut args = Args::new();
     let mut pos_args = Vec::new();
@@ -539,7 +574,7 @@ fn main() -> Result<(), Error> {
         }
     }
 
-// ===== :723
+// ===== :733
     if args.docs_only && args.code_only {
         return Err(ArgError::DocsAndCodeOnly.into());
     }
@@ -572,7 +607,24 @@ fn main() -> Result<(), Error> {
         return Err(ArgError::TooManyArgs.into());
     }
 
-// ===== :761
+// ===== :772
+    if let Some(input_path_text) = &input_path {
+        // Reverse-split input_path to get something like [till, <lang>, filename, ..]
+        let exts: Vec<&str> = input_path_text
+            .rsplit('.')
+            .collect();
+        
+        if exts.len() >= 3 && exts[0] == "till" {
+            let lang = exts[1];
+
+            args.lang = Some(lang.to_string());
+            args.comment = COMMENT_STYLES
+                .get(lang)
+                .map(|comment| comment.to_string());
+        }
+    }
+
+// ===== :794
     let mut input: Box<dyn io::Read>;
     if args.stdin {
         input = Box::new(io::stdin());
@@ -586,7 +638,7 @@ fn main() -> Result<(), Error> {
 
     let (docs, code) = parse(&args, &mut input)?;
 
-// ===== :780
+// ===== :813
     let mut docs_output: Box<dyn io::Write>;
     if args.code_only {
         // Very handy Rust std util, essentially a programmatic /dev/null
@@ -625,7 +677,7 @@ fn main() -> Result<(), Error> {
     return Ok(());
 }
 
-// ===== :827 - Error handling
+// ===== :860 - Error handling
 // TODO add pretty-printing instead of using derived Debug
 #[derive(Debug)]
 enum Error {

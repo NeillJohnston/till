@@ -48,7 +48,7 @@ Together, they let you turn a mess of code into something that can be read top-t
 To start, here's the layout of the completed source file, to let you know what we're working towards.
 _Convention note: a label in (parentheses) means that it appears in the appendix._
 
-```
+```rs
 @> (Imports)
 
 @> (Constants)
@@ -63,7 +63,7 @@ _Convention note: a label in (parentheses) means that it appears in the appendix
 ## Parsing and compiling .till files
 
 **The till parser + compiler**
-```
+```rs
 @> Data structures
 
 @> The parser
@@ -83,7 +83,7 @@ This tree can then be flattened into source code.
 We implement some constructors, and a `trim` function that will remove leading/trailing whitespace lines.
 
 **Data structures**
-```
+```rs
 #[derive(Clone)]
 struct Block {
     tag: BlockTag,
@@ -144,7 +144,7 @@ Because `CodeTree`s are the structure that gets written directly to the code out
 
 The `NodeTag` enum has a couple of convenience functions so that we don't need to constantly `match` against its variants.
 
-```
+```rs
 enum CodeTree {
     Leaf(String),
     Node {
@@ -196,7 +196,7 @@ impl CodeTree {
 Lastly, an error type.
 There aren't many different reasons for the parser to fail, due to its simplicity.
 
-```
+```rs
 #[derive(Debug)]
 enum ParserError {
     ReusedRef(String, usize),  // (label, line number)
@@ -215,7 +215,7 @@ This is defined in the appendix.
 The parser also relies on a helper function (`resolve`), which is explained later.
 
 **The parser**
-```
+```rs
 fn parse(
     args: &Args,
     input: &mut dyn io::Read
@@ -236,7 +236,7 @@ There are only a few rules to follow:
 4. Encountering a line starting with the `CONT_BLOCK_MARKER` (`\\-`) starts a block of code that will be attached to the previous block of code.
 
 **...fn parse**
-```
+```rs
 let mut block_list = Vec::new();
 let mut curr_block = Block::new_docs(1);
 let mut line_idx = 1;
@@ -302,7 +302,7 @@ First, split the list into two: one for docs and one for code.
 The code needs to only hold code-tagged blocks.
 The docs comprises both code and docs, so we can just rename `block_list` to `docs` and call it done.
 
-```
+```rs
 let code = block_list
     .iter()
     .filter(|block| block.tag != BlockTag::Doc)
@@ -320,7 +320,7 @@ We just have to feed it the top-level blocks in the order presented in the docum
 
 At the end, we return from `parse`.
 
-```
+```rs
 let mut used = vec![false; code.len()];
 let mut tree = CodeTree::new_node(NodeTag::Root, 0);
 
@@ -342,7 +342,7 @@ There are two tasks needed to resolve the code tree: process each line for refer
 At the end, we return the tree that we've built.
 
 **fn resolve**
-```
+```rs
 fn resolve(
     idx: usize,
     tag: NodeTag,
@@ -369,7 +369,7 @@ Each line may be a regular line of code, or a reference.
 If we see that the trimmed line starts with a ref marker, then we proceed with ref processing - otherwise, we can simply add the line as a leaf in the tree.
 
 **Process each line**
-```
+```rs
 let mut ref_type = None;
 let content = line.trim_start();
 if content.starts_with(FORWARD_REF_MARKER) {
@@ -406,7 +406,7 @@ The absolute last thing we need to do is get the whitespace from this block and 
 Then we can add the node to the tree we're building.
 
 **Process the ref**
-```
+```rs
 let mut ref_idx = None;
 // Rust trick to dynamically dispatch the iterator function for different types
 let range: Box<dyn Iterator<Item = usize>> =
@@ -448,7 +448,7 @@ Before we return from `resolve`, there's one more ref we need to check for - the
 We don't need to check whether this block has been used - it comes after our current block and can't be referenced by label.
 
 **Check for a cont. block**
-```
+```rs
 if idx+1 < code.len() {
     if let BlockTag::ContCode = code[idx+1].tag {
         let subtree = resolve(idx+1, tag.continued(), code, used)?;
@@ -465,7 +465,7 @@ Both the documentation and the code are in a good state to start writing them to
 Brace yourself, here's the entire `compile` function:
 
 **The compiler**
-```
+```rs
 fn compile(
     args: &Args,
     docs: Vec<Block>,
@@ -487,12 +487,16 @@ Obviously, the complexity is hidden behind other functions again.
 
 `write_docs` is simple, and just writes each line as-is with a little extra formatting for code blocks.
 
-```
+```rs
 fn write_docs<W: Write>(
     docs: &Vec<Block>,
     output: &mut io::BufWriter<W>,
-    _args: &Args
+    args: &Args
 ) -> Result<(), io::Error> {
+    let syntax_lang =
+        if let Some(lang) = &args.lang { lang }
+        else                           { ""   };
+
     for Block { tag, text, .. } in docs.iter() {
         match tag {
             BlockTag::Doc => {
@@ -501,7 +505,7 @@ fn write_docs<W: Write>(
                 }
             },
             BlockTag::Code => {
-                writeln!(output, "```")?;
+                writeln!(output, "```{}", syntax_lang)?;
                 for line in text.iter() {
                     write!(output, "{}", line)?;
                 }
@@ -509,14 +513,14 @@ fn write_docs<W: Write>(
             },
             BlockTag::LabeledCode(label) => {
                 writeln!(output, "**{}**", label)?;
-                writeln!(output, "```")?;
+                writeln!(output, "```{}", syntax_lang)?;
                 for line in text.iter() {
                     write!(output, "{}", line)?;
                 }
                 writeln!(output, "```")?;
             },
             BlockTag::ContCode => {
-                writeln!(output, "```")?;
+                writeln!(output, "```{}", syntax_lang)?;
                 for line in text.iter() {
                     write!(output, "{}", line)?;
                 }
@@ -532,7 +536,7 @@ fn write_docs<W: Write>(
 The `write_code` function is more complex but doesn't directly handle most of the work, instead acting as a proxy for the `write_code_tree` function.
 Each block of code may itself be a deeper reference - all the whitespace of each block is collected in the `whitespace` parameter and passed down through recursive calls.
 
-```
+```rs
 fn write_code<W: Write>(
     code: &CodeTree,
     output: &mut io::BufWriter<W>,
@@ -540,8 +544,10 @@ fn write_code<W: Write>(
 ) -> Result<(), io::Error> {
     write_code_tree(&"".to_string(), &code, output, args)
 }
+
+@> (Supported languages)
 ```
-```
+```rs
 fn write_code_tree<W: Write>(
     whitespace: &String,
     code: &CodeTree,
@@ -562,20 +568,22 @@ fn write_code_tree<W: Write>(
             whitespace.push_str(&whitespace_);
 
             // Section header comment
-            match tag {
-                NodeTag::TopLevel => {
-                    writeln!(output, r"{}{} ===== :{}", whitespace, args.comment, line)?;
-                },
-                NodeTag::ContTopLevel => {
-                    writeln!(output, r"{}{} ===== :{}", whitespace, args.comment, line)?;
-                },
-                NodeTag::Labeled(label) => {
-                    writeln!(output, r"{}{} ===== :{} - {}", whitespace, args.comment, line, label)?;
-                },
-                NodeTag::ContLabeled(_) => {
-                    writeln!(output, r"{}{} ===== :{}", whitespace, args.comment, line)?;
-                },
-                _ => {}
+            if let Some(comment) = &args.comment {
+                match tag {
+                    NodeTag::TopLevel => {
+                        writeln!(output, r"{}{} ===== :{}", whitespace, comment, line)?;
+                    },
+                    NodeTag::ContTopLevel => {
+                        writeln!(output, r"{}{} ===== :{}", whitespace, comment, line)?;
+                    },
+                    NodeTag::Labeled(label) => {
+                        writeln!(output, r"{}{} ===== :{} - {}", whitespace, comment, line, label)?;
+                    },
+                    NodeTag::ContLabeled(_) => {
+                        writeln!(output, r"{}{} ===== :{}", whitespace, comment, line)?;
+                    },
+                    _ => {}
+                }
             }
 
             // Write the content of the code tree
@@ -604,7 +612,7 @@ fn write_code_tree<W: Write>(
 ## Creating the `till` CLI
 
 **The till app**
-```
+```rs
 @> Data structures
 
 @> The main function
@@ -615,14 +623,16 @@ fn write_code_tree<W: Write>(
 First, a simple data structure to hold the program args.
 
 **Data structures**
-```
+```rs
 struct Args {
     docs_only: bool,
     code_only: bool,
     stdin: bool,
     stdout: bool,
     preserve: bool,
-    comment: String
+
+    lang: Option<String>,
+    comment: Option<String>
 }
 
 impl Args {
@@ -633,8 +643,8 @@ impl Args {
             stdin: false,
             stdout: false,
             preserve: false,
-            // TODO make this configurable somehow, maybe read input file name?
-            comment: "//".to_string()
+            lang: None,
+            comment: None
         }
     }
 }
@@ -642,7 +652,7 @@ impl Args {
 
 And a data structure to handle arg errors.
 
-```
+```rs
 #[derive(Debug)]
 enum ArgError {
     DocsAndCodeOnly,
@@ -658,7 +668,7 @@ Finally, we're at the entrypoint of the app.
 The first thing the app needs to do is parse the command-line args to extract the flags and positional arguments.
 
 **The main function**
-```
+```rs
 fn main() -> Result<(), Error> {
     let mut args = Args::new();
     let mut pos_args = Vec::new();
@@ -689,7 +699,7 @@ There are a few rules to uphold, based on the flags that are set:
 - If we're producing both docs and code, then they must get written to files, not stdout
 - We need exactly 1 positional arg for each file that needs to be read from/written to.
 
-```
+```rs
     if args.docs_only && args.code_only {
         return Err(ArgError::DocsAndCodeOnly.into());
     }
@@ -723,9 +733,30 @@ There are a few rules to uphold, based on the flags that are set:
     }
 ```
 
+Here we can also check for a language extension.
+By convention, if your file extension is ".lang.till", then `till` will read lang as the source language name and provide additional formatting - section comments in the source code and Markdown-enabled syntax highlighting in the documentation.
+
+```rs
+    if let Some(input_path_text) = &input_path {
+        // Reverse-split input_path to get something like [till, <lang>, filename, ..]
+        let exts: Vec<&str> = input_path_text
+            .rsplit('.')
+            .collect();
+        
+        if exts.len() >= 3 && exts[0] == "till" {
+            let lang = exts[1];
+
+            args.lang = Some(lang.to_string());
+            args.comment = COMMENT_STYLES
+                .get(lang)
+                .map(|comment| comment.to_string());
+        }
+    }
+```
+
 With the args parsed and validated, we can start by parsing:
 
-```
+```rs
     let mut input: Box<dyn io::Read>;
     if args.stdin {
         input = Box::new(io::stdin());
@@ -742,7 +773,7 @@ With the args parsed and validated, we can start by parsing:
 
 ...and if that went well, then we can pass the result to the compiler:
 
-```
+```rs
     let mut docs_output: Box<dyn io::Write>;
     if args.code_only {
         // Very handy Rust std util, essentially a programmatic /dev/null
@@ -788,7 +819,7 @@ The app uses a single, uniform error type.
 By using some `From` implementations, this error type can be a sum of different types, including a custom "other" type which is a catch-all for errors not implemented by us.
 
 **Error handling**
-```
+```rs
 // TODO add pretty-printing instead of using derived Debug
 #[derive(Debug)]
 enum Error {
@@ -824,8 +855,12 @@ Imports!
 Usually these come first, but since we're just importing some std libraries, I wanted to keep them from turning into extra visual clutter.
 
 **(Imports)**
-```
+```rs
+#[macro_use]
+extern crate lazy_static; // For the language-comment map
+
 use std::{
+    collections::HashMap,
     env,
     fs::OpenOptions,
     io::{
@@ -845,7 +880,7 @@ Five different tokens need to be recognized by the parser:
 - Two tokens for forward/backward references.
 
 **(Constants)**
-```
+```rs
 const BLOCK_MARKER:         &str = r"\\";
 const LABELED_BLOCK_MARKER: &str = r"\\@";
 const CONT_BLOCK_MARKER:    &str = r"\\-";
@@ -856,7 +891,7 @@ const BACKWARD_REF_MARKER:  &str = r"<@";
 This is the function that strips blocks of their leading/trailing whitespace.
 
 **(fn Block::trim)**
-```
+```rs
 fn trim(&mut self) {
     let mut start = 0;
     for line in self.text.iter() {
@@ -885,7 +920,7 @@ fn trim(&mut self) {
 This is the little bit of boilerplate that helps us avoid a lot of destructuring when dealing with `NodeTag`s.
 
 **(impl NodeTag)**
-```
+```rs
 impl NodeTag {
     fn continued(&self) -> Self {
         match self {
@@ -914,5 +949,30 @@ impl NodeTag {
             _ => false
         }
     }
+}
+```
+
+**(Supported languages)**
+```rs
+lazy_static! {
+    static ref COMMENT_STYLES: HashMap<&'static str, &'static str> = {
+        let comment_style_pairs = vec![
+            ("rs",   "//"),
+            ("c",    "//"),
+            ("cpp",  "//"),
+            ("java", "//"),
+            ("py",   "#" ),
+            ("js",   "//"),
+            ("ts",   "//"),
+            ("hs",   "--")
+        ];
+
+        let mut map = HashMap::new();
+        for (lang, comment) in comment_style_pairs.into_iter() {
+            map.insert(lang, comment);
+        }
+
+        map
+    };
 }
 ```
