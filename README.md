@@ -535,6 +535,9 @@ fn write_docs<W: Write>(
 
 The `write_code` function is more complex but doesn't directly handle most of the work, instead acting as a proxy for the `write_code_tree` function.
 Each block of code may itself be a deeper reference - all the whitespace of each block is collected in the `whitespace` parameter and passed down through recursive calls.
+In order to print the tree in the right order, we simply traverse it from top to bottom.
+
+
 
 ```rs
 fn write_code<W: Write>(
@@ -544,8 +547,6 @@ fn write_code<W: Write>(
 ) -> Result<(), io::Error> {
     write_code_tree(&"".to_string(), &code, output, args)
 }
-
-@> (Supported languages)
 ```
 ```rs
 fn write_code_tree<W: Write>(
@@ -735,6 +736,7 @@ There are a few rules to uphold, based on the flags that are set:
 
 Here we can also check for a language extension.
 By convention, if your file extension is ".lang.till", then `till` will read lang as the source language name and provide additional formatting - section comments in the source code and Markdown-enabled syntax highlighting in the documentation.
+Comment styles are hardcoded as a string -> string map, from lang extension to comment marker token.
 
 ```rs
     if let Some(input_path_text) = &input_path {
@@ -749,7 +751,7 @@ By convention, if your file extension is ".lang.till", then `till` will read lan
             args.lang = Some(lang.to_string());
             args.comment = COMMENT_STYLES
                 .get(lang)
-                .map(|comment| comment.to_string());
+                .map(|comment| comment.to_string()); // Maps the interior of the Option
         }
     }
 ```
@@ -852,13 +854,11 @@ impl From<io::Error> for Error {
 These are bits of code that weren't important or complex enough to warrant discussion when they were first used.
 
 Imports!
-Usually these come first, but since we're just importing some std libraries, I wanted to keep them from turning into extra visual clutter.
+Usually these come first, but since we're mostly just importing some std libraries, I wanted to keep them from turning into extra visual clutter.
 
 **(Imports)**
 ```rs
-#[macro_use]
-extern crate lazy_static; // For the language-comment map
-
+use lazy_static::lazy_static; // For the language-comment map
 use std::{
     collections::HashMap,
     env,
@@ -879,6 +879,8 @@ Five different tokens need to be recognized by the parser:
 - One token to denote a continued block of code
 - Two tokens for forward/backward references.
 
+We also use a lazy_static block so that we can treat the COMMENT_STYLES HashMap as a const.
+
 **(Constants)**
 ```rs
 const BLOCK_MARKER:         &str = r"\\";
@@ -886,6 +888,23 @@ const LABELED_BLOCK_MARKER: &str = r"\\@";
 const CONT_BLOCK_MARKER:    &str = r"\\-";
 const FORWARD_REF_MARKER:   &str = r"@>";
 const BACKWARD_REF_MARKER:  &str = r"<@";
+
+lazy_static! {
+    static ref COMMENT_STYLES: HashMap<&'static str, &'static str> = {
+        HashMap::from_iter(
+            [
+                ("rs",   "//"),
+                ("c",    "//"),
+                ("cpp",  "//"),
+                ("java", "//"),
+                ("py",   "#" ),
+                ("js",   "//"),
+                ("ts",   "//"),
+                ("hs",   "--")
+            ].into_iter()
+        )
+    };
+}
 ```
 
 This is the function that strips blocks of their leading/trailing whitespace.
@@ -949,30 +968,5 @@ impl NodeTag {
             _ => false
         }
     }
-}
-```
-
-**(Supported languages)**
-```rs
-lazy_static! {
-    static ref COMMENT_STYLES: HashMap<&'static str, &'static str> = {
-        let comment_style_pairs = vec![
-            ("rs",   "//"),
-            ("c",    "//"),
-            ("cpp",  "//"),
-            ("java", "//"),
-            ("py",   "#" ),
-            ("js",   "//"),
-            ("ts",   "//"),
-            ("hs",   "--")
-        ];
-
-        let mut map = HashMap::new();
-        for (lang, comment) in comment_style_pairs.into_iter() {
-            map.insert(lang, comment);
-        }
-
-        map
-    };
 }
 ```

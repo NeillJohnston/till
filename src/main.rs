@@ -1,8 +1,6 @@
 // ===== :53
-// ===== :897 - (Imports)
-#[macro_use]
-extern crate lazy_static; // For the language-comment map
-
+// ===== :899 - (Imports)
+use lazy_static::lazy_static; // For the language-comment map
 use std::{
     collections::HashMap,
     env,
@@ -14,12 +12,29 @@ use std::{
     }
 };
 
-// ===== :923 - (Constants)
+// ===== :925 - (Constants)
 const BLOCK_MARKER:         &str = r"\\";
 const LABELED_BLOCK_MARKER: &str = r"\\@";
 const CONT_BLOCK_MARKER:    &str = r"\\-";
 const FORWARD_REF_MARKER:   &str = r"@>";
 const BACKWARD_REF_MARKER:  &str = r"<@";
+
+lazy_static! {
+    static ref COMMENT_STYLES: HashMap<&'static str, &'static str> = {
+        HashMap::from_iter(
+            [
+                ("rs",   "//"),
+                ("c",    "//"),
+                ("cpp",  "//"),
+                ("java", "//"),
+                ("py",   "#" ),
+                ("js",   "//"),
+                ("ts",   "//"),
+                ("hs",   "--")
+            ].into_iter()
+        )
+    };
+}
 
 // ===== :69 - The till parser + compiler
 // ===== :90 - Data structures
@@ -71,7 +86,7 @@ impl Block {
         }
     }
 
-    // ===== :935 - (fn Block::trim)
+    // ===== :954 - (fn Block::trim)
     fn trim(&mut self) {
         let mut start = 0;
         for line in self.text.iter() {
@@ -143,7 +158,7 @@ impl CodeTree {
     }
 }
 
-// ===== :965 - (impl NodeTag)
+// ===== :984 - (impl NodeTag)
 impl NodeTag {
     fn continued(&self) -> Self {
         match self {
@@ -421,7 +436,7 @@ fn write_docs<W: Write>(
     return Ok(());
 }
 
-// ===== :562
+// ===== :565
 fn write_code<W: Write>(
     code: &CodeTree,
     output: &mut io::BufWriter<W>,
@@ -430,30 +445,7 @@ fn write_code<W: Write>(
     write_code_tree(&"".to_string(), &code, output, args)
 }
 
-// ===== :999 - (Supported languages)
-lazy_static! {
-    static ref COMMENT_STYLES: HashMap<&'static str, &'static str> = {
-        let comment_style_pairs = vec![
-            ("rs",   "//"),
-            ("c",    "//"),
-            ("cpp",  "//"),
-            ("java", "//"),
-            ("py",   "#" ),
-            ("js",   "//"),
-            ("ts",   "//"),
-            ("hs",   "--")
-        ];
-
-        let mut map = HashMap::new();
-        for (lang, comment) in comment_style_pairs.into_iter() {
-            map.insert(lang, comment);
-        }
-
-        map
-    };
-}
-
-// ===== :574
+// ===== :575
 fn write_code_tree<W: Write>(
     whitespace: &String,
     code: &CodeTree,
@@ -514,8 +506,8 @@ fn write_code_tree<W: Write>(
     return Ok(());
 }
 
-// ===== :640 - The till app
-// ===== :652 - Data structures
+// ===== :641 - The till app
+// ===== :653 - Data structures
 struct Args {
     docs_only: bool,
     code_only: bool,
@@ -541,7 +533,7 @@ impl Args {
     }
 }
 
-// ===== :683
+// ===== :684
 #[derive(Debug)]
 enum ArgError {
     DocsAndCodeOnly,
@@ -550,7 +542,7 @@ enum ArgError {
     NotEnoughArgs
 }
 
-// ===== :700 - The main function
+// ===== :701 - The main function
 fn main() -> Result<(), Error> {
     let mut args = Args::new();
     let mut pos_args = Vec::new();
@@ -574,7 +566,7 @@ fn main() -> Result<(), Error> {
         }
     }
 
-// ===== :733
+// ===== :734
     if args.docs_only && args.code_only {
         return Err(ArgError::DocsAndCodeOnly.into());
     }
@@ -607,7 +599,7 @@ fn main() -> Result<(), Error> {
         return Err(ArgError::TooManyArgs.into());
     }
 
-// ===== :772
+// ===== :774
     if let Some(input_path_text) = &input_path {
         // Reverse-split input_path to get something like [till, <lang>, filename, ..]
         let exts: Vec<&str> = input_path_text
@@ -620,11 +612,11 @@ fn main() -> Result<(), Error> {
             args.lang = Some(lang.to_string());
             args.comment = COMMENT_STYLES
                 .get(lang)
-                .map(|comment| comment.to_string());
+                .map(|comment| comment.to_string()); // Maps the interior of the Option
         }
     }
 
-// ===== :794
+// ===== :796
     let mut input: Box<dyn io::Read>;
     if args.stdin {
         input = Box::new(io::stdin());
@@ -638,7 +630,7 @@ fn main() -> Result<(), Error> {
 
     let (docs, code) = parse(&args, &mut input)?;
 
-// ===== :813
+// ===== :815
     let mut docs_output: Box<dyn io::Write>;
     if args.code_only {
         // Very handy Rust std util, essentially a programmatic /dev/null
@@ -677,7 +669,7 @@ fn main() -> Result<(), Error> {
     return Ok(());
 }
 
-// ===== :860 - Error handling
+// ===== :862 - Error handling
 // TODO add pretty-printing instead of using derived Debug
 #[derive(Debug)]
 enum Error {
