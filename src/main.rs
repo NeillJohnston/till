@@ -4,15 +4,18 @@ use lazy_static::lazy_static; // For the language-comment map
 use std::{
     collections::HashMap,
     env,
+    error,
+    fmt,
     fs::OpenOptions,
     io::{
         self,
         BufRead,
         Write
-    }
+    },
+    process::ExitCode
 };
 
-// ===== :925 - (Constants)
+// ===== :928 - (Constants)
 const BLOCK_MARKER:         &str = r"\\";
 const LABELED_BLOCK_MARKER: &str = r"\\@";
 const CONT_BLOCK_MARKER:    &str = r"\\-";
@@ -86,7 +89,7 @@ impl Block {
         }
     }
 
-    // ===== :954 - (fn Block::trim)
+    // ===== :1034 - (fn Block::trim)
     fn trim(&mut self) {
         let mut start = 0;
         for line in self.text.iter() {
@@ -100,6 +103,11 @@ impl Block {
             let is_blank = line.trim().len() == 0;
             if !is_blank { break; }
             end -= 1;
+        }
+    
+        // Occurs if a block is all whitespace
+        if start > end {
+            start = 0;
         }
     
         self.text = self.text
@@ -158,7 +166,7 @@ impl CodeTree {
     }
 }
 
-// ===== :984 - (impl NodeTag)
+// ===== :1069 - (impl NodeTag)
 impl NodeTag {
     fn continued(&self) -> Self {
         match self {
@@ -192,8 +200,9 @@ impl NodeTag {
 // ===== :207
 #[derive(Debug)]
 enum ParserError {
-    ReusedRef(String, usize),  // (label, line number)
-    RefNotFound(String, usize) // (label, line number)
+    ReusedRef(String, usize),                  // (label, line number)
+    RefNotFound(String, usize),                // (label, line number)
+    UnusedBlocks(Vec<(Option<String>, usize)>) // [(label, line number)]
 }
 
 // ===== :227 - The parser
@@ -282,10 +291,30 @@ fn parse(
         tree.push(subtree);
     }
     
+    // Find unused blocks, if any
+    let mut unused = Vec::new();
+    for idx in 0..code.len() {
+        if !used[idx] {
+            match &code[idx].tag {
+                BlockTag::LabeledCode(label) => {
+                    unused.push((Some(label.clone()), code[idx].line));
+                },
+                BlockTag::ContCode => {
+                    unused.push((None, code[idx].line));
+                },
+                _ => todo!()
+            }
+        }
+    }
+    
+    if unused.len() > 0 {
+        return Err(ParserError::UnusedBlocks(unused).into());
+    }
+    
     return Ok((docs, tree));
 }
 
-// ===== :360 - fn resolve
+// ===== :380 - fn resolve
 fn resolve(
     idx: usize,
     tag: NodeTag,
@@ -299,7 +328,7 @@ fn resolve(
     let mut tree = CodeTree::new_node(tag.clone(), *line_bias);
     for (line_idx, line) in text.iter().enumerate() {
         let line_idx = line_bias + line_idx;
-        // ===== :388 - Process each line
+        // ===== :408 - Process each line
         let mut ref_type = None;
         let content = line.trim_start();
         if content.starts_with(FORWARD_REF_MARKER) {
@@ -320,7 +349,7 @@ fn resolve(
                 .trim()
                 .to_string();
         
-            // ===== :426 - Process the ref
+            // ===== :446 - Process the ref
             let mut ref_idx = None;
             // Rust trick to dynamically dispatch the iterator function for different types
             let range: Box<dyn Iterator<Item = usize>> =
@@ -363,7 +392,7 @@ fn resolve(
         }
     }
 
-    // ===== :469 - Check for a cont. block
+    // ===== :489 - Check for a cont. block
     if idx+1 < code.len() {
         if let BlockTag::ContCode = code[idx+1].tag {
             let subtree = resolve(idx+1, tag.continued(), code, used)?;
@@ -374,7 +403,7 @@ fn resolve(
     return Ok(tree);
 }
 
-// ===== :487 - The compiler
+// ===== :507 - The compiler
 fn compile(
     args: &Args,
     docs: Vec<Block>,
@@ -391,7 +420,7 @@ fn compile(
     return Ok(());
 }
 
-// ===== :511
+// ===== :531
 fn write_docs<W: Write>(
     docs: &Vec<Block>,
     output: &mut io::BufWriter<W>,
@@ -436,7 +465,7 @@ fn write_docs<W: Write>(
     return Ok(());
 }
 
-// ===== :565
+// ===== :585
 fn write_code<W: Write>(
     code: &CodeTree,
     output: &mut io::BufWriter<W>,
@@ -445,7 +474,7 @@ fn write_code<W: Write>(
     write_code_tree(&"".to_string(), &code, output, args)
 }
 
-// ===== :575
+// ===== :595
 fn write_code_tree<W: Write>(
     whitespace: &String,
     code: &CodeTree,
@@ -506,8 +535,8 @@ fn write_code_tree<W: Write>(
     return Ok(());
 }
 
-// ===== :641 - The till app
-// ===== :653 - Data structures
+// ===== :661 - The till app
+// ===== :673 - Data structures
 struct Args {
     docs_only: bool,
     code_only: bool,
@@ -533,17 +562,28 @@ impl Args {
     }
 }
 
-// ===== :684
+// ===== :704
 #[derive(Debug)]
 enum ArgError {
+    UnknownFlag(char), // (flag)
     DocsAndCodeOnly,
     DocsAndCodeToStdout,
     TooManyArgs,
     NotEnoughArgs
 }
 
-// ===== :701 - The main function
-fn main() -> Result<(), Error> {
+// ===== :724 - The main function
+fn main() -> ExitCode {
+    match run() {
+        Err(error) => {
+            eprintln!("Error: {}", error);
+            ExitCode::FAILURE
+        },
+        _ => ExitCode::SUCCESS
+    }
+}
+
+fn run() -> Result<(), Error> {
     let mut args = Args::new();
     let mut pos_args = Vec::new();
 
@@ -556,7 +596,9 @@ fn main() -> Result<(), Error> {
                     'i' => &mut args.stdin,
                     'o' => &mut args.stdout,
                     'p' => &mut args.preserve,
-                    _ => { todo!(); }
+                    c => {
+                        return Err(ArgError::UnknownFlag(c).into());
+                    }
                 };
                 *flag = true;
             }
@@ -566,7 +608,7 @@ fn main() -> Result<(), Error> {
         }
     }
 
-// ===== :734
+// ===== :769
     if args.docs_only && args.code_only {
         return Err(ArgError::DocsAndCodeOnly.into());
     }
@@ -575,7 +617,7 @@ fn main() -> Result<(), Error> {
     }
 
     let mut pos_args = pos_args.into_iter();
-    let mut next_pos_arg = move || {
+    let mut next_pos_arg = || {
         pos_args
             .next()
             .ok_or::<Error>(ArgError::NotEnoughArgs.into())
@@ -599,7 +641,7 @@ fn main() -> Result<(), Error> {
         return Err(ArgError::TooManyArgs.into());
     }
 
-// ===== :774
+// ===== :809
     if let Some(input_path_text) = &input_path {
         // Reverse-split input_path to get something like [till, <lang>, filename, ..]
         let exts: Vec<&str> = input_path_text
@@ -616,7 +658,7 @@ fn main() -> Result<(), Error> {
         }
     }
 
-// ===== :796
+// ===== :831
     let mut input: Box<dyn io::Read>;
     if args.stdin {
         input = Box::new(io::stdin());
@@ -630,7 +672,7 @@ fn main() -> Result<(), Error> {
 
     let (docs, code) = parse(&args, &mut input)?;
 
-// ===== :815
+// ===== :850
     let mut docs_output: Box<dyn io::Write>;
     if args.code_only {
         // Very handy Rust std util, essentially a programmatic /dev/null
@@ -669,30 +711,73 @@ fn main() -> Result<(), Error> {
     return Ok(());
 }
 
-// ===== :862 - Error handling
-// TODO add pretty-printing instead of using derived Debug
-#[derive(Debug)]
-enum Error {
-    Arg(ArgError),
-    Parser(ParserError),
-    Other(String)
-}
+// ===== :959 - (Error handling)
+type Error = Box<dyn error::Error>;
 
-impl From<ArgError> for Error {
-    fn from(error: ArgError) -> Self {
-        Error::Arg(error)
+impl error::Error for ArgError {}
+
+impl fmt::Display for ArgError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        match self {
+            ArgError::UnknownFlag(c) => write!(f,
+                "Unknown flag -{}",
+                c
+            ),
+            ArgError::DocsAndCodeOnly => write!(f,
+                concat!(
+                    "Can only use one of -d, -c.\n",
+                    "If you want to generate both docs and code, use file outputs:\n",
+                    "    till <input.x.till> <docs-output.md> <code-output.x>"
+                ),
+            ),
+            ArgError::DocsAndCodeToStdout => write!(f,
+                concat!(
+                    "Cannot send both docs and code to stdout.\n",
+                    "Try either running with -d/-c, or using file outputs:",
+                    "    till <input.x.till> <docs-output.md> <code-output.x>"
+                )
+            ),
+            ArgError::TooManyArgs => write!(f,
+                "Too many args",
+            ),
+            ArgError::NotEnoughArgs => write!(f,
+                "Not enough arguments",
+            )
+        }
     }
 }
 
-impl From<ParserError> for Error {
-    fn from(error: ParserError) -> Self {
-        Error::Parser(error)
-    }
-}
+impl error::Error for ParserError {}
 
-impl From<io::Error> for Error {
-    fn from(error: io::Error) -> Self {
-        Error::Other(format!("{}", error))
+impl fmt::Display for ParserError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        match self {
+            ParserError::ReusedRef(label, line) => write!(f,
+                concat!(
+                    "Reused reference \"{}\" (line {}).\n",
+                    "Label names may be reused, but each labeled block must be referenced exactly once",
+                ),
+                label,
+                line
+            ),
+            ParserError::RefNotFound(label, line) => write!(f,
+                "Reference \"{}\" (line {}) not found",
+                label,
+                line
+            ),
+            ParserError::UnusedBlocks(occurrences) => {
+                write!(f, "{} unused code block(s):", occurrences.len())?;
+                for (label, line) in occurrences.iter() {
+                    if let Some(label) = label {
+                        write!(f, "\n    Label \"{}\" (line {})", label, line-1)?;
+                    }
+                    else {
+                        write!(f, "\n    Continuation block (line {})", line-1)?;
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 }
 

@@ -57,7 +57,7 @@ _Convention note: a label in (parentheses) means that it appears in the appendix
 
 @> The till app
 
-@> Error handling
+@> (Error handling)
 ```
 
 ## Parsing and compiling .till files
@@ -199,8 +199,9 @@ There aren't many different reasons for the parser to fail, due to its simplicit
 ```rs
 #[derive(Debug)]
 enum ParserError {
-    ReusedRef(String, usize),  // (label, line number)
-    RefNotFound(String, usize) // (label, line number)
+    ReusedRef(String, usize),                  // (label, line number)
+    RefNotFound(String, usize),                // (label, line number)
+    UnusedBlocks(Vec<(Option<String>, usize)>) // [(label, line number)]
 }
 ```
 
@@ -209,8 +210,7 @@ enum ParserError {
 Parsing (turning input into structured data) and compiling (turning structured data into output) are two separate steps, which get composed by `main`.
 We may have to read/write using different types of sources (stdin/stdout/file), so we'll keep things general and make each type `dyn Read/Write`, and then immediately turn them into buffered readers/writers.
 
-The `Error` type of the `Result` is a custom error type that comprises any error that the entire app can produce.
-This is defined in the appendix.
+TODO explain errors
 
 The parser also relies on a helper function (`resolve`), which is explained later.
 
@@ -330,6 +330,26 @@ for idx in 0..code.len() {
 
     let subtree = resolve(idx, NodeTag::TopLevel, &code, &mut used)?;
     tree.push(subtree);
+}
+
+// Find unused blocks, if any
+let mut unused = Vec::new();
+for idx in 0..code.len() {
+    if !used[idx] {
+        match &code[idx].tag {
+            BlockTag::LabeledCode(label) => {
+                unused.push((Some(label.clone()), code[idx].line));
+            },
+            BlockTag::ContCode => {
+                unused.push((None, code[idx].line));
+            },
+            _ => todo!()
+        }
+    }
+}
+
+if unused.len() > 0 {
+    return Err(ParserError::UnusedBlocks(unused).into());
 }
 
 return Ok((docs, tree));
@@ -656,6 +676,7 @@ And a data structure to handle arg errors.
 ```rs
 #[derive(Debug)]
 enum ArgError {
+    UnknownFlag(char), // (flag)
     DocsAndCodeOnly,
     DocsAndCodeToStdout,
     TooManyArgs,
@@ -666,11 +687,23 @@ enum ArgError {
 ### The main function
 
 Finally, we're at the entrypoint of the app.
+The main function itself wraps around a secondary function, `run`.
+This allows us to more cleanly report errors and return.
 The first thing the app needs to do is parse the command-line args to extract the flags and positional arguments.
 
 **The main function**
 ```rs
-fn main() -> Result<(), Error> {
+fn main() -> ExitCode {
+    match run() {
+        Err(error) => {
+            eprintln!("Error: {}", error);
+            ExitCode::FAILURE
+        },
+        _ => ExitCode::SUCCESS
+    }
+}
+
+fn run() -> Result<(), Error> {
     let mut args = Args::new();
     let mut pos_args = Vec::new();
 
@@ -683,7 +716,9 @@ fn main() -> Result<(), Error> {
                     'i' => &mut args.stdin,
                     'o' => &mut args.stdout,
                     'p' => &mut args.preserve,
-                    _ => { todo!(); }
+                    c => {
+                        return Err(ArgError::UnknownFlag(c).into());
+                    }
                 };
                 *flag = true;
             }
@@ -709,7 +744,7 @@ There are a few rules to uphold, based on the flags that are set:
     }
 
     let mut pos_args = pos_args.into_iter();
-    let mut next_pos_arg = move || {
+    let mut next_pos_arg = || {
         pos_args
             .next()
             .ok_or::<Error>(ArgError::NotEnoughArgs.into())
@@ -815,40 +850,6 @@ With the args parsed and validated, we can start by parsing:
 }
 ```
 
-## Error handling
-
-The app uses a single, uniform error type.
-By using some `From` implementations, this error type can be a sum of different types, including a custom "other" type which is a catch-all for errors not implemented by us.
-
-**Error handling**
-```rs
-// TODO add pretty-printing instead of using derived Debug
-#[derive(Debug)]
-enum Error {
-    Arg(ArgError),
-    Parser(ParserError),
-    Other(String)
-}
-
-impl From<ArgError> for Error {
-    fn from(error: ArgError) -> Self {
-        Error::Arg(error)
-    }
-}
-
-impl From<ParserError> for Error {
-    fn from(error: ParserError) -> Self {
-        Error::Parser(error)
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(error: io::Error) -> Self {
-        Error::Other(format!("{}", error))
-    }
-}
-```
-
 ## Appendix
 
 These are bits of code that weren't important or complex enough to warrant discussion when they were first used.
@@ -862,12 +863,15 @@ use lazy_static::lazy_static; // For the language-comment map
 use std::{
     collections::HashMap,
     env,
+    error,
+    fmt,
     fs::OpenOptions,
     io::{
         self,
         BufRead,
         Write
-    }
+    },
+    process::ExitCode
 };
 ```
 
@@ -907,6 +911,82 @@ lazy_static! {
 }
 ```
 
+A single `Error` type is used - a dynamic reference to a `std::error::Error`.
+This has the advantage of allowing us to define multiple error types while easily handling them all separately.
+Also, `io::Error` derives this type, so we can natively return IO errors without any extra handling.
+
+**(Error handling)**
+```rs
+type Error = Box<dyn error::Error>;
+
+impl error::Error for ArgError {}
+
+impl fmt::Display for ArgError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        match self {
+            ArgError::UnknownFlag(c) => write!(f,
+                "Unknown flag -{}",
+                c
+            ),
+            ArgError::DocsAndCodeOnly => write!(f,
+                concat!(
+                    "Can only use one of -d, -c.\n",
+                    "If you want to generate both docs and code, use file outputs:\n",
+                    "    till <input.x.till> <docs-output.md> <code-output.x>"
+                ),
+            ),
+            ArgError::DocsAndCodeToStdout => write!(f,
+                concat!(
+                    "Cannot send both docs and code to stdout.\n",
+                    "Try either running with -d/-c, or using file outputs:",
+                    "    till <input.x.till> <docs-output.md> <code-output.x>"
+                )
+            ),
+            ArgError::TooManyArgs => write!(f,
+                "Too many args",
+            ),
+            ArgError::NotEnoughArgs => write!(f,
+                "Not enough arguments",
+            )
+        }
+    }
+}
+
+impl error::Error for ParserError {}
+
+impl fmt::Display for ParserError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        match self {
+            ParserError::ReusedRef(label, line) => write!(f,
+                concat!(
+                    "Reused reference \"{}\" (line {}).\n",
+                    "Label names may be reused, but each labeled block must be referenced exactly once",
+                ),
+                label,
+                line
+            ),
+            ParserError::RefNotFound(label, line) => write!(f,
+                "Reference \"{}\" (line {}) not found",
+                label,
+                line
+            ),
+            ParserError::UnusedBlocks(occurrences) => {
+                write!(f, "{} unused code block(s):", occurrences.len())?;
+                for (label, line) in occurrences.iter() {
+                    if let Some(label) = label {
+                        write!(f, "\n    Label \"{}\" (line {})", label, line-1)?;
+                    }
+                    else {
+                        write!(f, "\n    Continuation block (line {})", line-1)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+}
+```
+
 This is the function that strips blocks of their leading/trailing whitespace.
 
 **(fn Block::trim)**
@@ -924,6 +1004,11 @@ fn trim(&mut self) {
         let is_blank = line.trim().len() == 0;
         if !is_blank { break; }
         end -= 1;
+    }
+
+    // Occurs if a block is all whitespace
+    if start > end {
+        start = 0;
     }
 
     self.text = self.text
