@@ -5,7 +5,7 @@ When you run `till` on a .till source file, it weaves all of the documentation +
 
 **Usage**
 ```
-till [-dciop] [input file] [docs output file] [code output file]
+till [-dciophV] [input file] [docs output file] [code output file]
 ```
 
 Flag | Meaning
@@ -15,6 +15,8 @@ Flag | Meaning
 `-i` | Read input from stdin
 `-o` | Write output to stdout (requires one of `-d`, `-c`)
 `-p` | Preserve source code formatting
+`-h` | Print help
+`-V` | Print version
 
 This README and the source code (src/main.rs) were generated with `till`.
 If you want to see it in action, you can re-generate README.md/main.rs for yourself:
@@ -44,6 +46,11 @@ Continued blocks let you split up long sections of code with in-depth explanatio
 Together, they let you turn a mess of code into something that can be read top-to-bottom.
 
 # Till
+
+**Version**
+```rs
+const VERSION: &str = "1.0.1";
+```
 
 To start, here's the layout of the completed source file, to let you know what we're working towards.
 _Convention note: a label in (parentheses) means that it appears in the appendix._
@@ -651,6 +658,8 @@ struct Args {
     stdin: bool,
     stdout: bool,
     preserve: bool,
+    help: bool,
+    version: bool,
 
     lang: Option<String>,
     comment: Option<String>
@@ -664,6 +673,8 @@ impl Args {
             stdin: false,
             stdout: false,
             preserve: false,
+            help: false,
+            version: false,
             lang: None,
             comment: None
         }
@@ -680,7 +691,8 @@ enum ArgError {
     DocsAndCodeOnly,
     DocsAndCodeToStdout,
     TooManyArgs,
-    NotEnoughArgs
+    NotEnoughArgs,
+    NoArgs
 }
 ```
 
@@ -690,13 +702,14 @@ Finally, we're at the entrypoint of the app.
 The main function itself wraps around a secondary function, `run`.
 This allows us to more cleanly report errors and return.
 The first thing the app needs to do is parse the command-line args to extract the flags and positional arguments.
+If no args are provided, we'll prompt the user to run with -h.
 
 **The main function**
 ```rs
 fn main() -> ExitCode {
     match run() {
         Err(error) => {
-            eprintln!("Error: {}", error);
+            eprintln!("{}", error);
             ExitCode::FAILURE
         },
         _ => ExitCode::SUCCESS
@@ -707,7 +720,12 @@ fn run() -> Result<(), Error> {
     let mut args = Args::new();
     let mut pos_args = Vec::new();
 
-    for arg in env::args().skip(1) {
+    let env_args: Vec<_> = env::args().skip(1).collect();
+    if env_args.len() == 0 {
+        return Err(ArgError::NoArgs.into());
+    }
+
+    for arg in env_args.iter() {
         if arg.starts_with("-") {
             for ch in arg.chars().skip(1) {
                 let flag = match ch {
@@ -716,6 +734,8 @@ fn run() -> Result<(), Error> {
                     'i' => &mut args.stdin,
                     'o' => &mut args.stdout,
                     'p' => &mut args.preserve,
+                    'h' => &mut args.help,
+                    'V' => &mut args.version,
                     c => {
                         return Err(ArgError::UnknownFlag(c).into());
                     }
@@ -736,6 +756,12 @@ There are a few rules to uphold, based on the flags that are set:
 - We need exactly 1 positional arg for each file that needs to be read from/written to.
 
 ```rs
+    if args.help {
+        return Err(HELP_STRING.into());
+    }
+    if args.version {
+        return Err(format!("Till v{}", VERSION).into());
+    }
     if args.docs_only && args.code_only {
         return Err(ArgError::DocsAndCodeOnly.into());
     }
@@ -887,6 +913,8 @@ We also use a lazy_static block so that we can treat the COMMENT_STYLES HashMap 
 
 **(Constants)**
 ```rs
+<@ Version
+
 const BLOCK_MARKER:         &str = r"\\";
 const LABELED_BLOCK_MARKER: &str = r"\\@";
 const CONT_BLOCK_MARKER:    &str = r"\\-";
@@ -909,6 +937,23 @@ lazy_static! {
         )
     };
 }
+
+const HELP_STRING: &str = "\
+Usage: till [-dciophV] [input file] [docs output file] [code output file]
+
+-d: Generate docs only.
+-c: Generate code only.
+
+-i: Read input from stdin. If omitted, input will be read from the input file arg.
+-o: Write output to stdout. If omitted, output will be written to the output file args.
+    Stdout may only write docs or code, so one of -d/-c must be specified.
+
+-p: Preserve source code formatting.
+    This flag will prevent till from rewriting the whitespace before/after blocks.
+
+-h: Print help and exit.
+-V: Print version and exit.\
+";
 ```
 
 A single `Error` type is used - a dynamic reference to a `std::error::Error`.
@@ -925,28 +970,31 @@ impl fmt::Display for ArgError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
             ArgError::UnknownFlag(c) => write!(f,
-                "Unknown flag -{}",
+                "Error: Unknown flag -{}",
                 c
             ),
             ArgError::DocsAndCodeOnly => write!(f,
                 concat!(
-                    "Can only use one of -d, -c.\n",
-                    "If you want to generate both docs and code, use file outputs:\n",
+                    "Error: Can only use one of -d, -c.\n",
+                    "Error: If you want to generate both docs and code, use file outputs:\n",
                     "    till <input.x.till> <docs-output.md> <code-output.x>"
                 ),
             ),
             ArgError::DocsAndCodeToStdout => write!(f,
                 concat!(
-                    "Cannot send both docs and code to stdout.\n",
-                    "Try either running with -d/-c, or using file outputs:",
+                    "Error: Cannot send both docs and code to stdout.\n",
+                    "Error: Try either running with -d/-c, or using file outputs:",
                     "    till <input.x.till> <docs-output.md> <code-output.x>"
                 )
             ),
             ArgError::TooManyArgs => write!(f,
-                "Too many args",
+                "Error: Too many arguments",
             ),
             ArgError::NotEnoughArgs => write!(f,
-                "Not enough arguments",
+                "Error: Not enough arguments",
+            ),
+            ArgError::NoArgs => write!(f,
+                "Error: No arguments given. Try running till -h for help."
             )
         }
     }
